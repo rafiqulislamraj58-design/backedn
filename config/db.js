@@ -1,26 +1,45 @@
 const { MongoClient } = require("mongodb");
+const mongoose = require("mongoose");
 require("dotenv").config();
 
-const client = new MongoClient(process.env.MONGO_URI);
+const mongoURI = process.env.MONGO_URI;
+const client = new MongoClient(mongoURI || "mongodb://127.0.0.1:27017");
 
 let db;
+let isConnected = false;
 
 const connectDB = async () => {
-  await client.connect();
+if (!mongoURI) {
+throw new Error("MONGO_URI is missing from .env");
+}
 
-  db = client.db("bilidrop-db");
+if (isConnected) {
+return db;
+}
 
-  console.log("MongoDB connected successfully");
+await client.connect();
 
-  return db;
+db = client.db("bilidrop-db");
+
+await mongoose.connect(mongoURI, {
+dbName: "bilidrop-db",
+serverSelectionTimeoutMS: 10000,
+});
+
+isConnected = true;
+
+console.log("MongoDB native driver connected successfully");
+console.log("Mongoose connected successfully");
+
+return db;
 };
 
 const getDB = () => {
-  if (!db) {
-    throw new Error("Database is not connected");
-  }
+if (!isConnected || !db) {
+throw new Error("Database is not connected");
+}
 
-  return db;
+return db;
 };
 
 module.exports = connectDB;

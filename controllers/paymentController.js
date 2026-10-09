@@ -1,6 +1,10 @@
 const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
-const { createCheckoutSession } = require("../services/stripeService");
+const Delivery = require("../models/DeliveryModel");
+const {
+  createCheckoutSession,
+  retrieveSession,
+} = require("../services/stripeService");
 
 const createPaymentSession = async (req, res) => {
   try {
@@ -45,9 +49,29 @@ const createPaymentSession = async (req, res) => {
       });
     }
 
-    const bookPrice = Number(book.price || 0);
+    if (String(book.status).toLowerCase() !== "published") {
+      return res.status(400).json({
+        success: false,
+        message: "This book is not available for delivery",
+      });
+    }
+
+    if (book.availability === "checkedOut") {
+      return res.status(400).json({
+        success: false,
+        message: "This book is currently checked out",
+      });
+    }
+
+    if (book.librarianEmail === email) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot request your own book",
+      });
+    }
+
     const deliveryFee = Number(book.deliveryFee || 0);
-    const amount = bookPrice + deliveryFee;
+    const amount = deliveryFee;
 
     if (!Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({
@@ -59,7 +83,6 @@ const createPaymentSession = async (req, res) => {
     const order = {
       bookId: book._id,
       bookTitle: book.title,
-      bookPrice,
       deliveryFee,
       amount,
       customerEmail: email,
@@ -109,6 +132,93 @@ const createPaymentSession = async (req, res) => {
   }
 };
 
+const confirmPayment = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Session ID is required",
+      });
+    }
+
+    const session = await retrieveSession(sessionId);
+
+    if (session.payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "Payment not completed",
+      });
+    }
+
+    const db = getDB();
+    const orders = db.collection("orders");
+    const books = db.collection("books");
+
+    const order = await orders.findOne({ stripeSessionId: session.id });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // success page refresh korle duplicate delivery toiri hobe na
+    if (order.paymentStatus === "paid") {
+      return res.status(200).json({
+        success: true,
+        message: "Already confirmed",
+      });
+    }
+
+    const book = await books.findOne({ _id: order.bookId });
+
+    await orders.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          paymentStatus: "paid",
+          orderStatus: "confirmed",
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    const userDoc = await db
+      .collection("user")
+      .findOne({ email: order.customerEmail });
+
+    await Delivery.create({
+      bookId: order.bookId,
+      bookTitle: order.bookTitle,
+      clientName: userDoc?.name || order.customerEmail,
+      clientEmail: order.customerEmail,
+      librarianEmail: book?.librarianEmail || "unknown",
+      deliveryFee: order.deliveryFee,
+      status: "Pending",
+    });
+
+    await books.updateOne(
+      { _id: order.bookId },
+      { $set: { availability: "checkedOut", updatedAt: new Date() } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Payment confirmed, delivery requested",
+    });
+  } catch (error) {
+    console.error("Confirm payment error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to confirm payment",
+    });
+  }
+};
+
 const getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -149,5 +259,6 @@ const getOrderById = async (req, res) => {
 
 module.exports = {
   createPaymentSession,
+  confirmPayment,
   getOrderById,
 };

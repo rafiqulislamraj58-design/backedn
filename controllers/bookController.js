@@ -10,6 +10,8 @@ const createBook = async (req, res) => {
   try {
     const data = req.body;
 
+    const librarianEmail = data.librarianEmail || data.email;
+
     if (
       !data.title ||
       !data.author ||
@@ -20,6 +22,13 @@ const createBook = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Please provide all required book information",
+      });
+    }
+
+    if (!librarianEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Librarian email is required",
       });
     }
 
@@ -39,6 +48,7 @@ const createBook = async (req, res) => {
       deliveryFee,
       category: data.category,
       image: data.image,
+      librarianEmail: librarianEmail.trim().toLowerCase(),
       status: "pending",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -86,6 +96,42 @@ const getBooks = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch books",
+    });
+  }
+};
+
+const getLibrarianBooks = async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Librarian email is required",
+      });
+    }
+
+    const booksCollection = getBooksCollection();
+
+    const librarianEmail = email.trim().toLowerCase();
+
+    const books = await booksCollection
+      .find({
+        librarianEmail,
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      books,
+    });
+  } catch (error) {
+    console.error("Get librarian books error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch librarian books",
     });
   }
 };
@@ -171,6 +217,14 @@ const updateBook = async (req, res) => {
       image: data.image,
       updatedAt: new Date(),
     };
+
+    if (data.librarianEmail || data.email) {
+      updateData.librarianEmail = (
+        data.librarianEmail || data.email
+      )
+        .trim()
+        .toLowerCase();
+    }
 
     const booksCollection = getBooksCollection();
 
@@ -314,6 +368,7 @@ const unpublishBook = async (req, res) => {
 module.exports = {
   createBook,
   getBooks,
+  getLibrarianBooks,
   getBookById,
   updateBook,
   deleteBook,
