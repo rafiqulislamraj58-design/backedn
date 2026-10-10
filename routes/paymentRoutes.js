@@ -1,17 +1,16 @@
-const express = require("express");
 
-const {
+import express from "express";
+
+import {
   createPaymentSession,
   confirmPayment,
   getOrderById,
-} = require("../controllers/paymentController");
+} from "../controllers/paymentController.js";
 
 const router = express.Router();
 
 router.post("/create-checkout-session", createPaymentSession);
-
 router.post("/confirm", confirmPayment);
-
 router.get("/orders/:id", getOrderById);
 
-module.exports = router;
+export default router;

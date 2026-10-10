@@ -1,8 +1,14 @@
-const express = require('express');
+
+import express from "express";
+
+import {
+  getLibrarianDeliveries,
+  updateDeliveryStatus,
+} from "../controllers/deliveryController.js";
+
 const router = express.Router();
-const { getLibrarianDeliveries, updateDeliveryStatus } = require('../controllers/deliveryController');
 
-router.get('/librarian', getLibrarianDeliveries);
-router.patch('/:id/status', updateDeliveryStatus);
+router.get("/librarian", getLibrarianDeliveries);
+router.patch("/:id/status", updateDeliveryStatus);
 
-module.exports = router;
+export default router;

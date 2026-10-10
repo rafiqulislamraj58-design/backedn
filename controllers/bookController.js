@@ -1,5 +1,6 @@
-const { ObjectId } = require("mongodb");
-const { getDB } = require("../config/db");
+
+import { ObjectId } from "mongodb";
+import { getDB } from "../config/db.js";
 
 const getBooksCollection = () => {
   const db = getDB();
@@ -8,130 +9,135 @@ const getBooksCollection = () => {
 
 const createBook = async (req, res) => {
   try {
-    const data = req.body;
+    const data = req.body || {};
 
-    const librarianEmail = data.librarianEmail || data.email;
+    const title = data.title?.trim();
+    const author = data.author?.trim();
+    const description = data.description?.trim();
+    const category = data.category?.trim();
+    const image = data.image?.trim();
 
-    if (
-      !data.title ||
-      !data.author ||
-      !data.description ||
-      !data.category ||
-      !data.image
-    ) {
+    // Prefer the authenticated user's email.
+    // The body fallback supports the current frontend.
+    const email =
+      req.user?.email ||
+      req.user?.user?.email ||
+      data.librarianEmail ||
+      data.email;
+
+    if (!title || !author || !description || !category || !image) {
       return res.status(400).json({
         success: false,
-        message: "Please provide all required book information",
+        message: "Please provide all required book information.",
       });
     }
 
-    if (!librarianEmail) {
+    if (!email || typeof email !== "string" || !email.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Librarian email is required",
+        message: "Librarian email is required.",
       });
     }
 
     const deliveryFee = Number(data.deliveryFee);
 
-    if (Number.isNaN(deliveryFee) || deliveryFee < 0) {
+    if (
+      data.deliveryFee === "" ||
+      data.deliveryFee === undefined ||
+      !Number.isFinite(deliveryFee) ||
+      deliveryFee < 0
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Please provide a valid delivery fee",
+        message: "Please provide a valid delivery fee.",
       });
     }
 
+    const librarianEmail = email.trim().toLowerCase();
+
     const book = {
-      title: data.title.trim(),
-      author: data.author.trim(),
-      description: data.description.trim(),
+      title,
+      author,
+      description,
+      category,
+      image,
       deliveryFee,
-      category: data.category,
-      image: data.image,
-      librarianEmail: librarianEmail.trim().toLowerCase(),
+      librarianEmail,
       status: "pending",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
-    const booksCollection = getBooksCollection();
+    const collection = getBooksCollection();
+    const result = await collection.insertOne(book);
 
-    const result = await booksCollection.insertOne(book);
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "Book saved successfully",
-      bookId: result.insertedId,
+      message: "Book saved successfully.",
       book: {
         ...book,
         _id: result.insertedId,
       },
     });
   } catch (error) {
-    console.error("Book save error:", error);
+    console.error("Create book error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to save book",
+      message: "Failed to save book.",
     });
   }
 };
 
 const getBooks = async (req, res) => {
   try {
-    const booksCollection = getBooksCollection();
-
-    const books = await booksCollection
+    const books = await getBooksCollection()
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       books,
     });
   } catch (error) {
     console.error("Get books error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to fetch books",
+      message: "Failed to fetch books.",
     });
   }
 };
 
 const getLibrarianBooks = async (req, res) => {
   try {
-    const { email } = req.query;
+    const email = req.query.email;
 
-    if (!email) {
+    if (!email || typeof email !== "string") {
       return res.status(400).json({
         success: false,
-        message: "Librarian email is required",
+        message: "Librarian email is required.",
       });
     }
 
-    const booksCollection = getBooksCollection();
-
-    const librarianEmail = email.trim().toLowerCase();
-
-    const books = await booksCollection
+    const books = await getBooksCollection()
       .find({
-        librarianEmail,
+        librarianEmail: email.trim().toLowerCase(),
       })
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       books,
     });
   } catch (error) {
     console.error("Get librarian books error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to fetch librarian books",
+      message: "Failed to fetch librarian books.",
     });
   }
 };
@@ -143,33 +149,31 @@ const getBookById = async (req, res) => {
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid book ID",
+        message: "Invalid book ID.",
       });
     }
 
-    const booksCollection = getBooksCollection();
-
-    const book = await booksCollection.findOne({
+    const book = await getBooksCollection().findOne({
       _id: new ObjectId(id),
     });
 
     if (!book) {
       return res.status(404).json({
         success: false,
-        message: "Book not found",
+        message: "Book not found.",
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       book,
     });
   } catch (error) {
-    console.error("Get single book error:", error);
+    console.error("Get book error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to fetch book",
+      message: "Failed to fetch book.",
     });
   }
 };
@@ -177,88 +181,78 @@ const getBookById = async (req, res) => {
 const updateBook = async (req, res) => {
   try {
     const { id } = req.params;
-    const data = req.body;
+    const data = req.body || {};
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid book ID",
+        message: "Invalid book ID.",
+      });
+    }
+
+    const title = data.title?.trim();
+    const author = data.author?.trim();
+    const description = data.description?.trim();
+    const category = data.category?.trim();
+    const image = data.image?.trim();
+    const deliveryFee = Number(data.deliveryFee);
+
+    if (!title || !author || !description || !category || !image) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide all required book information.",
       });
     }
 
     if (
-      !data.title ||
-      !data.author ||
-      !data.description ||
-      !data.category ||
-      !data.image
+      data.deliveryFee === "" ||
+      data.deliveryFee === undefined ||
+      !Number.isFinite(deliveryFee) ||
+      deliveryFee < 0
     ) {
       return res.status(400).json({
         success: false,
-        message: "Please provide all required book information",
+        message: "Please provide a valid delivery fee.",
       });
     }
 
-    const deliveryFee = Number(data.deliveryFee);
-
-    if (Number.isNaN(deliveryFee) || deliveryFee < 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide a valid delivery fee",
-      });
-    }
-
-    const updateData = {
-      title: data.title.trim(),
-      author: data.author.trim(),
-      description: data.description.trim(),
-      deliveryFee,
-      category: data.category,
-      image: data.image,
-      updatedAt: new Date(),
-    };
-
-    if (data.librarianEmail || data.email) {
-      updateData.librarianEmail = (
-        data.librarianEmail || data.email
-      )
-        .trim()
-        .toLowerCase();
-    }
-
-    const booksCollection = getBooksCollection();
-
-    const result = await booksCollection.updateOne(
+    const result = await getBooksCollection().updateOne(
+      { _id: new ObjectId(id) },
       {
-        _id: new ObjectId(id),
-      },
-      {
-        $set: updateData,
+        $set: {
+          title,
+          author,
+          description,
+          category,
+          image,
+          deliveryFee,
+          updatedAt: new Date(),
+        },
       }
     );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: "Book not found",
+        message: "Book not found.",
       });
     }
 
-    const updatedBook = await booksCollection.findOne({
+    const book = await getBooksCollection().findOne({
       _id: new ObjectId(id),
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Book updated successfully",
-      book: updatedBook,
+      message: "Book updated successfully.",
+      book,
     });
   } catch (error) {
     console.error("Update book error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to update book",
+      message: "Failed to update book.",
     });
   }
 };
@@ -270,33 +264,31 @@ const deleteBook = async (req, res) => {
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid book ID",
+        message: "Invalid book ID.",
       });
     }
 
-    const booksCollection = getBooksCollection();
-
-    const result = await booksCollection.deleteOne({
+    const result = await getBooksCollection().deleteOne({
       _id: new ObjectId(id),
     });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: "Book not found",
+        message: "Book not found.",
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Book deleted successfully",
+      message: "Book deleted successfully.",
     });
   } catch (error) {
     console.error("Delete book error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to delete book",
+      message: "Failed to delete book.",
     });
   }
 };
@@ -308,20 +300,20 @@ const unpublishBook = async (req, res) => {
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid book ID",
+        message: "Invalid book ID.",
       });
     }
 
-    const booksCollection = getBooksCollection();
+    const collection = getBooksCollection();
 
-    const book = await booksCollection.findOne({
+    const book = await collection.findOne({
       _id: new ObjectId(id),
     });
 
     if (!book) {
       return res.status(404).json({
         success: false,
-        message: "Book not found",
+        message: "Book not found.",
       });
     }
 
@@ -330,14 +322,12 @@ const unpublishBook = async (req, res) => {
     if (status !== "published" && status !== "approved") {
       return res.status(400).json({
         success: false,
-        message: "Only published books can be unpublished",
+        message: "Only published books can be unpublished.",
       });
     }
 
-    await booksCollection.updateOne(
-      {
-        _id: new ObjectId(id),
-      },
+    await collection.updateOne(
+      { _id: new ObjectId(id) },
       {
         $set: {
           status: "unpublished",
@@ -346,26 +336,26 @@ const unpublishBook = async (req, res) => {
       }
     );
 
-    const updatedBook = await booksCollection.findOne({
+    const updatedBook = await collection.findOne({
       _id: new ObjectId(id),
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Book unpublished successfully",
+      message: "Book unpublished successfully.",
       book: updatedBook,
     });
   } catch (error) {
     console.error("Unpublish book error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to update book",
+      message: "Failed to update book.",
     });
   }
 };
 
-module.exports = {
+export {
   createBook,
   getBooks,
   getLibrarianBooks,

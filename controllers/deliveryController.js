@@ -1,6 +1,6 @@
-const Delivery = require("../models/DeliveryModel");
+import Delivery from "../models/DeliveryModel.js";
 
-exports.getLibrarianDeliveries = async (req, res) => {
+export const getLibrarianDeliveries = async (req, res) => {
   try {
     const { email } = req.query;
 
@@ -27,7 +27,7 @@ exports.getLibrarianDeliveries = async (req, res) => {
   }
 };
 
-exports.updateDeliveryStatus = async (req, res) => {
+export const updateDeliveryStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;

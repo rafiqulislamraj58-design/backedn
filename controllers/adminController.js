@@ -1,5 +1,5 @@
-const { ObjectId } = require("mongodb");
-const { getDB } = require("../config/db");
+import { ObjectId } from "mongodb";
+import { getDB } from "../config/db.js";
 
 const handleError = (res, error, message) => {
   console.error(message, error);
@@ -369,7 +369,7 @@ const getTransactions = async (req, res) => {
   }
 };
 
-module.exports = {
+export {
   getStats,
   getAnalytics,
   getUsers,

@@ -1,26 +1,29 @@
-const { ObjectId } = require("mongodb");
-const { getDB } = require("../config/db");
-const Delivery = require("../models/DeliveryModel");
-const {
+
+import { ObjectId } from "mongodb";
+import { getDB } from "../config/db.js";
+import Delivery from "../models/DeliveryModel.js";
+import {
   createCheckoutSession,
   retrieveSession,
-} = require("../services/stripeService");
+} from "../services/stripeService.js";
 
 const createPaymentSession = async (req, res) => {
   try {
     const { bookId, customerEmail } = req.body;
 
-    if (!bookId) {
+    if (!bookId || !customerEmail) {
       return res.status(400).json({
         success: false,
-        message: "Book ID is required",
+        message: !bookId
+          ? "Book ID is required"
+          : "Customer email is required",
       });
     }
 
-    if (!customerEmail) {
+    if (typeof customerEmail !== "string" || !customerEmail.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Customer email is required",
+        message: "Valid customer email is required",
       });
     }
 
@@ -32,7 +35,6 @@ const createPaymentSession = async (req, res) => {
     }
 
     const email = customerEmail.trim().toLowerCase();
-
     const db = getDB();
 
     const booksCollection = db.collection("books");
@@ -63,14 +65,14 @@ const createPaymentSession = async (req, res) => {
       });
     }
 
-    if (book.librarianEmail === email) {
+    if (book.librarianEmail?.trim().toLowerCase() === email) {
       return res.status(400).json({
         success: false,
         message: "You cannot request your own book",
       });
     }
 
-    const deliveryFee = Number(book.deliveryFee || 0);
+    const deliveryFee = Number(book.deliveryFee);
     const amount = deliveryFee;
 
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -79,6 +81,8 @@ const createPaymentSession = async (req, res) => {
         message: "Invalid payment amount",
       });
     }
+
+    const now = new Date();
 
     const order = {
       bookId: book._id,
@@ -89,43 +93,51 @@ const createPaymentSession = async (req, res) => {
       paymentStatus: "pending",
       orderStatus: "pending",
       stripeSessionId: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     const orderResult = await ordersCollection.insertOne(order);
 
-    const session = await createCheckoutSession({
-      orderId: orderResult.insertedId,
-      bookId: book._id,
-      title: book.title,
-      amount,
-      customerEmail: email,
-    });
+    try {
+      const session = await createCheckoutSession({
+        orderId: orderResult.insertedId,
+        bookId: book._id,
+        title: book.title,
+        amount,
+        customerEmail: email,
+      });
 
-    await ordersCollection.updateOne(
-      {
+      await ordersCollection.updateOne(
+        { _id: orderResult.insertedId },
+        {
+          $set: {
+            stripeSessionId: session.id,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Checkout session created successfully",
+        sessionId: session.id,
+        checkoutUrl: session.url,
+        orderId: orderResult.insertedId,
+      });
+    } catch (stripeError) {
+      // Checkout session তৈরি ব্যর্থ হলে pending order মুছে দাও।
+      await ordersCollection.deleteOne({
         _id: orderResult.insertedId,
-      },
-      {
-        $set: {
-          stripeSessionId: session.id,
-          updatedAt: new Date(),
-        },
-      }
-    );
+        paymentStatus: "pending",
+      });
 
-    res.status(200).json({
-      success: true,
-      message: "Checkout session created successfully",
-      sessionId: session.id,
-      checkoutUrl: session.url,
-      orderId: orderResult.insertedId,
-    });
+      throw stripeError;
+    }
   } catch (error) {
     console.error("Create payment session error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to create payment session",
     });
@@ -136,10 +148,10 @@ const confirmPayment = async (req, res) => {
   try {
     const { sessionId } = req.body;
 
-    if (!sessionId) {
+    if (!sessionId || typeof sessionId !== "string") {
       return res.status(400).json({
         success: false,
-        message: "Session ID is required",
+        message: "Valid session ID is required",
       });
     }
 
@@ -156,7 +168,9 @@ const confirmPayment = async (req, res) => {
     const orders = db.collection("orders");
     const books = db.collection("books");
 
-    const order = await orders.findOne({ stripeSessionId: session.id });
+    const order = await orders.findOne({
+      stripeSessionId: session.id,
+    });
 
     if (!order) {
       return res.status(404).json({
@@ -165,18 +179,46 @@ const confirmPayment = async (req, res) => {
       });
     }
 
-    // success page refresh korle duplicate delivery toiri hobe na
+    // A refreshed success page must not create another delivery.
     if (order.paymentStatus === "paid") {
       return res.status(200).json({
         success: true,
-        message: "Already confirmed",
+        message: "Payment already confirmed",
       });
     }
 
-    const book = await books.findOne({ _id: order.bookId });
+    // Verify that the Stripe session belongs to this order.
+    if (
+      session.metadata?.orderId &&
+      session.metadata.orderId !== order._id.toString()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment session does not match the order",
+      });
+    }
 
-    await orders.updateOne(
-      { _id: order._id },
+    const book = await books.findOne({
+      _id: order.bookId,
+    });
+
+    if (!book) {
+      return res.status(404).json({
+        success: false,
+        message: "Book not found for this order",
+      });
+    }
+
+    const userDoc = await db.collection("user").findOne({
+      email: order.customerEmail,
+    });
+
+    // Only confirm payment for the matching pending order.
+    const paymentUpdate = await orders.updateOne(
+      {
+        _id: order._id,
+        paymentStatus: "pending",
+      },
       {
         $set: {
           paymentStatus: "paid",
@@ -186,33 +228,67 @@ const confirmPayment = async (req, res) => {
       }
     );
 
-    const userDoc = await db
-      .collection("user")
-      .findOne({ email: order.customerEmail });
+    if (paymentUpdate.modifiedCount === 0) {
+      const latestOrder = await orders.findOne({
+        _id: order._id,
+      });
 
-    await Delivery.create({
-      bookId: order.bookId,
-      bookTitle: order.bookTitle,
-      clientName: userDoc?.name || order.customerEmail,
-      clientEmail: order.customerEmail,
-      librarianEmail: book?.librarianEmail || "unknown",
-      deliveryFee: order.deliveryFee,
-      status: "Pending",
-    });
+      if (latestOrder?.paymentStatus === "paid") {
+        return res.status(200).json({
+          success: true,
+          message: "Payment already confirmed",
+        });
+      }
 
-    await books.updateOne(
-      { _id: order.bookId },
-      { $set: { availability: "checkedOut", updatedAt: new Date() } }
-    );
+      return res.status(409).json({
+        success: false,
+        message: "Order could not be confirmed",
+      });
+    }
 
-    res.status(200).json({
+    try {
+      await Delivery.create({
+        bookId: order.bookId,
+        bookTitle: order.bookTitle,
+        clientName: userDoc?.name || order.customerEmail,
+        clientEmail: order.customerEmail,
+        librarianEmail: book.librarianEmail || "unknown",
+        deliveryFee: order.deliveryFee,
+        status: "Pending",
+      });
+
+      await books.updateOne(
+        { _id: order.bookId },
+        {
+          $set: {
+            availability: "checkedOut",
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } catch (deliveryError) {
+      // Do not hide a delivery creation failure.
+      // Payment is already marked paid, so this needs reconciliation.
+      console.error(
+        "Payment confirmed but delivery creation failed:",
+        deliveryError
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Payment was confirmed, but delivery creation failed. Please contact support.",
+      });
+    }
+
+    return res.status(200).json({
       success: true,
       message: "Payment confirmed, delivery requested",
     });
   } catch (error) {
     console.error("Confirm payment error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to confirm payment",
     });
@@ -243,21 +319,21 @@ const getOrderById = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       order,
     });
   } catch (error) {
     console.error("Get order error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch order",
     });
   }
 };
 
-module.exports = {
+export {
   createPaymentSession,
   confirmPayment,
   getOrderById,

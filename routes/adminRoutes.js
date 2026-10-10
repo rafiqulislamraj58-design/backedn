@@ -1,6 +1,12 @@
-const express = require("express");
-const { verifyToken, verifyAdmin } = require("../middleware/auth");
-const {
+
+import express from "express";
+
+import {
+  verifyToken,
+  verifyAdmin,
+} from "../middleware/auth.js";
+
+import {
   getStats,
   getAnalytics,
   getUsers,
@@ -11,10 +17,11 @@ const {
   unpublishBookAdmin,
   deleteBookAdmin,
   getTransactions,
-} = require("../controllers/adminController");
+} from "../controllers/adminController.js";
 
 const router = express.Router();
 
+// Admin authentication and authorization
 router.use(verifyToken, verifyAdmin);
 
 router.get("/stats", getStats);
@@ -31,4 +38,4 @@ router.delete("/books/:id", deleteBookAdmin);
 
 router.get("/transactions", getTransactions);
 
-module.exports = router;
+export default router;
